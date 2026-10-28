@@ -1,7 +1,7 @@
 """Kotlin functions and cyclomatic complexity, following java.py.
 
 Every `fun` with a body is an entry: top-level, member, extension, and inside
-`object` / `companion object`. Local functions and lambdas stay inside the
+`object` / `companion object`. An `inline fun` is not: JaCoCo cannot see it run. Local functions and lambdas stay inside the
 enclosing function. Secondary constructors and `init` blocks are omitted, as
 Java omits constructors.
 
@@ -142,6 +142,20 @@ def _qualify(package: str | None, names: list[str], nested: str) -> str:
     return f"{package}.{body}" if package else body
 
 
+def _is_inline(node) -> bool:
+    """An `inline fun`. Its body is copied into each caller, so JaCoCo never
+    sees it run. Only the function's own modifiers count: the methods of an
+    `inline class` or `@JvmInline value class` are ordinary functions."""
+
+    modifiers = child_of_type(node, "modifiers")
+    if modifiers is None:
+        return False
+    return any(
+        child.type == "function_modifier" and child_of_type(child, "inline") is not None
+        for child in modifiers.children
+    )
+
+
 def _warn_parse_errors(path: str, tree) -> None:
     if tree.root_node.has_error:
         print(
@@ -167,6 +181,8 @@ class _Reader:
     def function(self, node) -> Function | None:
         ident = child_of_type(node, "simple_identifier")
         if ident is None or child_of_type(node, "function_body") is None:
+            return None
+        if _is_inline(node):
             return None
         namespace, jacoco_class = self.classes(node)
         return Function(

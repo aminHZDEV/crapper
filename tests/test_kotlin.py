@@ -266,3 +266,79 @@ def test_a_backticked_object_joins_its_jacoco_class():
     buffer = functions_in_source(BACKTICKS, "src/okio/-DeprecatedOkio.kt")[0]
     bundle = CoverageBundle(jacoco=parse_jacoco_index(xml))
     assert bundle.percent_for(buffer) == 75.0
+
+
+INLINE = """
+package demo
+
+annotation class InlineOnly
+
+inline fun bare(x: Int) = if (x > 0) 1 else 0
+public inline fun visible(x: Int) = x
+internal inline fun hidden(x: Int) = x
+private inline fun secret(x: Int) = x
+@InlineOnly inline fun annotated(x: Int) = x
+inline fun <reified T> Any.isA(): Boolean = this is T
+inline fun String.shout(block: (String) -> String) = block(uppercase())
+inline fun outer(x: Int): Int {
+    fun local(y: Int) = if (y > 0) y else 0
+    return local(x)
+}
+fun plain(x: Int) = x
+
+open class Base {
+    open fun run(block: () -> Unit) = block()
+}
+
+class Child : Base() {
+    override inline fun run(block: () -> Unit) = block()
+    fun kept() = 1
+}
+
+object Holder {
+    inline fun held(x: Int) = x
+}
+
+class WithCompanion {
+    companion object {
+        inline fun made(x: Int) = x
+    }
+}
+
+@JvmInline
+value class Meters(val value: Int) {
+    fun double() = Meters(value * 2)
+}
+
+inline class Legacy(val value: Int) {
+    fun half() = value / 2
+}
+"""
+
+
+def test_inline_functions_are_not_scored_wherever_they_are_declared():
+    assert _rows(INLINE, "src/demo/Inline.kt") == [
+        ("demo.InlineKt", "plain", 1),
+        ("demo.Base", "run", 1),
+        ("demo.Child", "kept", 1),
+        ("demo.Meters", "double", 1),
+        ("demo.Legacy", "half", 1),
+    ]
+
+
+def test_an_inline_function_drops_out_and_its_neighbor_still_joins_jacoco():
+    source = """
+package demo
+
+inline fun pick(x: Int, f: (Int) -> Int): Int { if (x > 0) return f(x); return 0 }
+fun plainPick(x: Int, f: (Int) -> Int): Int { if (x > 0) return f(x); return 0 }
+"""
+    xml = """<report><package name="demo"><class name="demo/InlineKt">
+<method name="pick" desc="(ILkotlin/jvm/functions/Function1;)I" line="4">
+<counter type="INSTRUCTION" missed="9" covered="0"/><counter type="LINE" missed="2" covered="0"/></method>
+<method name="plainPick" desc="(ILkotlin/jvm/functions/Function1;)I" line="5">
+<counter type="INSTRUCTION" missed="0" covered="9"/><counter type="LINE" missed="0" covered="2"/></method>
+</class></package></report>"""
+    functions = functions_in_source(source, "src/main/kotlin/demo/Inline.kt")
+    bundle = CoverageBundle(jacoco=parse_jacoco_index(xml))
+    assert [(f.name, bundle.percent_for(f)) for f in functions] == [("plainPick", 100.0)]
